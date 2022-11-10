@@ -1,6 +1,6 @@
 await main();
 async function main(){
-  const createBulkRecords = async (table, data) => {
+  const createBulkRecordsAsync = async (table, data) => {
     const pageSize = 50.0;
     for(let pageIndex = 0; pageIndex < Math.ceil(data.length / pageSize); pageIndex++)
     {
@@ -8,15 +8,24 @@ async function main(){
     }
   }
 
-  const deleteAllRecordsAsync = async (table) => {
+  const updateBulkRecordsAsync = async (table, data) => {
     const pageSize = 50.0;
-    const data = (await table.selectRecordsAsync({fields: []})).recordIds;
     for(let pageIndex = 0; pageIndex < Math.ceil(data.length / pageSize); pageIndex++)
     {
-      const ids = data.slice(pageIndex * pageSize, pageSize * (pageIndex + 1));    
-      await table.deleteRecordsAsync(ids);
+      const mappedData = data.slice(pageIndex * pageSize, pageSize * (pageIndex + 1)).map(x => {return {id: x.existingRecord.id, fields: x.newRecord}});
+      await table.updateRecordsAsync(mappedData)
     }
   }
+
+  // const deleteAllRecordsAsync = async (table) => {
+  //   const pageSize = 50.0;
+  //   const data = (await table.selectRecordsAsync({fields: []})).recordIds;
+  //   for(let pageIndex = 0; pageIndex < Math.ceil(data.length / pageSize); pageIndex++)
+  //   {
+  //     const ids = data.slice(pageIndex * pageSize, pageSize * (pageIndex + 1));    
+  //     await table.deleteRecordsAsync(ids);
+  //   }
+  // }
 
   const username = await input.textAsync('Email used with TeamGenius');
   const password = await input.textAsync('Password used with TeamGenius');
@@ -28,7 +37,7 @@ async function main(){
   let dataCount = 0;
   const table = base.getTable('Players');
 
-  await deleteAllRecordsAsync(table);
+  //await deleteAllRecordsAsync(table);
   do
   {
     const authHeaderValue = 'Basic ' + btoa(username + ":" + password);
@@ -65,13 +74,27 @@ async function main(){
           phone: x.phone,
           "User ID": x.customFields.filter(x => x.name === "User ID")[0]?.value
         };
-    });
-    await createBulkRecords(table, mappedData);
+    });  
+
+    const existingRecords = await table.selectRecordsAsync({fields: ['id']});
+    console.log(existingRecords);
+    
+    const mappedRecords = mappedData.map(x => { return { newRecord: x, existingRecord: existingRecords.records.find(y => y.getCellValueAsString('id') == x.id) } } )
+    console.log('Mapped Records', mappedRecords);
+
+    const recordsToUpdate = mappedRecords.filter(x => x.existingRecord != null);
+    console.log('Records to Update', recordsToUpdate);
+    
+    const recordsToCreate = mappedRecords.filter(x => x.existingRecord == null);
+    console.log('Records to Create', recordsToCreate);
+
+    await createBulkRecordsAsync(table, recordsToCreate.map(x => x.newRecord));
+    await updateBulkRecordsAsync(table, recordsToUpdate);
 
     skipCount += data.length;
-    console.log(skipCount);
+    console.log('Skip Count', skipCount);
     dataCount = data.length;
-    console.log(dataCount);
+    console.log('Data Count', dataCount);
   }
   while(dataCount > 0);
 }
