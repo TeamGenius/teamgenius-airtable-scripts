@@ -20,15 +20,24 @@ async function main(){
     }
   }
 
-  const deleteAllRecordsAsync = async (table) => {
+  const updateBulkRecordsAsync = async (table, data) => {
     const pageSize = 50.0;
-    const data = (await table.selectRecordsAsync({fields: []})).recordIds;
     for(let pageIndex = 0; pageIndex < Math.ceil(data.length / pageSize); pageIndex++)
     {
-      const ids = data.slice(pageIndex * pageSize, pageSize * (pageIndex + 1));    
-      await table.deleteRecordsAsync(ids);
+      const mappedData = data.slice(pageIndex * pageSize, pageSize * (pageIndex + 1)).map(x => {return {id: x.existingRecord.id, fields: x.newRecord}});
+      await table.updateRecordsAsync(mappedData)
     }
   }
+
+  // const deleteAllRecordsAsync = async (table) => {
+  //   const pageSize = 50.0;
+  //   const data = (await table.selectRecordsAsync({fields: []})).recordIds;
+  //   for(let pageIndex = 0; pageIndex < Math.ceil(data.length / pageSize); pageIndex++)
+  //   {
+  //     const ids = data.slice(pageIndex * pageSize, pageSize * (pageIndex + 1));    
+  //     await table.deleteRecordsAsync(ids);
+  //   }
+  // }
 
 
   const username = await input.textAsync('Email used with TeamGenius');
@@ -47,13 +56,12 @@ async function main(){
 
   if(apiResponse.ok)
   {
-
     console.log('API Call Succeeded');
     const data = await apiResponse.json();  
-
-    const overallTable = base.getTable('OverallScores');
+    console.log('Data', data);
+    const table = base.getTable('OverallScores');
     
-    await deleteAllRecordsAsync(overallTable);
+    //await deleteAllRecordsAsync(table);
 
     const playerEvalSessionRecords = [];
     //Write overall records
@@ -67,18 +75,20 @@ async function main(){
           "position": player.position,
           "assessmentId": assessmentId,
           "assessmentName": assessmentName,
+          "playerPoolId": player.playerPoolId,
           "playerPoolName": player.playerPoolName,
           "evalGroupName": player.evalGroupName,
-          "evalSession": evalSession.evalSessionName
+          "evalSessionId": evalSession.evalSessionId,
+          "evalSessionName": evalSession.evalSessionName
         };
         for(const scoringForm of evalSession.scoringFormRollups){
           for(const evalCriterion of scoringForm.evalCriterionRollups){
             const fieldName = `${scoringForm.scoringFormName} - ${evalCriterion.evalCriterionName}`;
             try{
-              overallTable.getField(fieldName);
+              table.getField(fieldName);
             }
             catch{
-              await overallTable.createFieldAsync(fieldName, 'number', {precision: 1.0});
+              await table.createFieldAsync(fieldName, 'number', {precision: 1.0});
             }
             
             playerEvalSessionRecord[`${scoringForm.scoringFormName} - ${evalCriterion.evalCriterionName}`] = evalCriterion.aggScoreValue;
@@ -87,7 +97,28 @@ async function main(){
         playerEvalSessionRecords.push(playerEvalSessionRecord);
       }    
     }
-    await createBulkRecordsAsync(overallTable, playerEvalSessionRecords);
+    
+    const existingRecords = await table.selectRecordsAsync({fields: ['playerId', 'playerPoolId', 'evalSessionId']});
+    console.log(existingRecords);
+    
+    const mappedRecords = playerEvalSessionRecords.map(x => { return { 
+        newRecord: x, 
+        existingRecord: existingRecords.records.find(y => 
+          y.getCellValueAsString('playerId') == x.playerId && 
+          y.getCellValueAsString('playerPoolId') == x.playerPoolId && 
+          y.getCellValueAsString('evalSessionId') == x.evalSessionId) 
+      } 
+    });
+    console.log('Mapped Records', mappedRecords);
+
+    const recordsToUpdate = mappedRecords.filter(x => x.existingRecord != null);
+    console.log('Records to Update', recordsToUpdate);
+    
+    const recordsToCreate = mappedRecords.filter(x => x.existingRecord == null);
+    console.log('Records to Create', recordsToCreate);
+
+    await createBulkRecordsAsync(table, recordsToCreate.map(x => x.newRecord));
+    await updateBulkRecordsAsync(table, recordsToUpdate);
   }
   else{
     console.log('API Call Failed');
